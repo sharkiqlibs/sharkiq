@@ -467,3 +467,16 @@ class AylaApi:
         shared_session = self.ensure_session()
         if shared_session is not None:
             shared_session.close()
+
+class Auth0Client:
+    AUTH_DOMAIN = "https://login.sharkninja.com"
+    CLIENT_ID = "wsguxrqm77mq4LtrTrwg8ZJUxmSrexGi"
+    REDIRECT_URI = "com.sharkninja.shark://login.sharkninja.com/ios/com.sharkninja.shark/callback"
+    SCOPE = "openid profile email offline_access"
+
+    @staticmethod
+    async def do_login(session: aiohttp.ClientSession, username: str, password: str) -> dict:
+        # same flow you already coded: /authorize -> /u/login -> /oauth/token
+        ...
+        return token_data
+
