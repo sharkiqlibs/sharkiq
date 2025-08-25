@@ -9,7 +9,8 @@ found at:
 
 import aiohttp
 import requests
-import urllib.parseimport logging
+import urllib.parse
+import logging
 LOGGER = logging.getLogger(__name__)
 
 from auth0.authentication import GetToken
