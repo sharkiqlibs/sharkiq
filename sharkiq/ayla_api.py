@@ -9,12 +9,14 @@ found at:
 
 import aiohttp
 import requests
+import urllib.parse
 from auth0.authentication import GetToken
 from auth0.asyncify import asyncify
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional
 from .const import (
     DEVICE_URL,
+    LOGGER,
     LOGIN_URL,
     AUTH0_HOST,
     SHARK_APP_ID,
@@ -468,84 +470,118 @@ class AylaApi:
         if shared_session is not None:
             shared_session.close()
 
+
+
 class Auth0Client:
     AUTH_DOMAIN = "https://login.sharkninja.com"
     CLIENT_ID = "wsguxrqm77mq4LtrTrwg8ZJUxmSrexGi"
-    REDIRECT_URI = "com.sharkninja.shark://login.sharkninja.com/ios/com.sharkninja.shark/callback"
+    REDIRECT_URI = (
+        "com.sharkninja.shark://login.sharkninja.com/ios/com.sharkninja.shark/callback"
+    )
     SCOPE = "openid profile email offline_access"
 
     @staticmethod
-    async def do_auth0_login(session: aiohttp.ClientSession, username: str, password: str) -> dict:
-    """Perform Auth0 login like the SharkClean app and return tokens."""
-    AUTH_DOMAIN = "https://login.sharkninja.com"
-    CLIENT_ID = "wsguxrqm77mq4LtrTrwg8ZJUxmSrexGi"
-    REDIRECT_URI = "com.sharkninja.shark://login.sharkninja.com/ios/com.sharkninja.shark/callback"
-    SCOPE = "openid profile email offline_access"
+    async def do_auth0_login(
+        session: aiohttp.ClientSession, username: str, password: str
+    ) -> dict:
+        """Perform Auth0 login like the SharkClean app and return tokens."""
 
-    HEADERS = {
-        "User-Agent": "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/139.0.0.0 Mobile Safari/537.36",
-        "Content-Type": "application/x-www-form-urlencoded",
-        "Origin": AUTH_DOMAIN,
-        "Referer": AUTH_DOMAIN + "/",
-    }
+        AUTH_DOMAIN = Auth0Client.AUTH_DOMAIN
+        CLIENT_ID = Auth0Client.CLIENT_ID
+        REDIRECT_URI = Auth0Client.REDIRECT_URI
+        SCOPE = Auth0Client.SCOPE
 
-    # 1. /authorize
-    authorize_url = (
-        f"{AUTH_DOMAIN}/authorize?"
-        + urllib.parse.urlencode(
-            {
-                "os": "android",
-                "response_type": "code",
-                "client_id": CLIENT_ID,
-                "redirect_uri": REDIRECT_URI,
-                "scope": SCOPE,
-            }
+        HEADERS = {
+            "User-Agent": (
+                "Mozilla/5.0 (Linux; Android 10; K) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/139.0.0.0 Mobile Safari/537.36"
+            ),
+            "Content-Type": "application/x-www-form-urlencoded",
+            "Origin": AUTH_DOMAIN,
+            "Referer": AUTH_DOMAIN + "/",
+        }
+
+        # -------------------
+        # Step 1: /authorize
+        # -------------------
+        authorize_url = (
+            f"{AUTH_DOMAIN}/authorize?"
+            + urllib.parse.urlencode(
+                {
+                    "os": "android",
+                    "response_type": "code",
+                    "client_id": CLIENT_ID,
+                    "redirect_uri": REDIRECT_URI,
+                    "scope": SCOPE,
+                }
+            )
         )
-    )
-    async with session.get(authorize_url, headers=HEADERS, allow_redirects=True) as resp:
-        parsed = urllib.parse.urlparse(str(resp.url))
-        state = urllib.parse.parse_qs(parsed.query).get("state", [None])[0]
-    if not state:
-        raise CannotConnect("No state returned from /authorize")
+        LOGGER.debug("Auth0 Step1: GET %s", authorize_url)
+        async with session.get(
+            authorize_url, headers=HEADERS, allow_redirects=True
+        ) as resp:
+            parsed = urllib.parse.urlparse(str(resp.url))
+            state = urllib.parse.parse_qs(parsed.query).get("state", [None])[0]
 
-    # 2. /u/login
-    login_url = f"{AUTH_DOMAIN}/u/login?state={state}"
-    form_data = {
-        "state": state,
-        "username": username,
-        "password": password,
-        "action": "default",
-    }
-    async with session.post(login_url, headers=HEADERS, data=form_data, allow_redirects=False) as resp:
-        redirect_url = resp.headers.get("Location")
+        if not state:
+            raise SharkIqAuthError("No state returned from /authorize")
+        LOGGER.debug("Auth0 Step1: Got state=%s", state)
 
-    code = None
-    if redirect_url and redirect_url.startswith("/authorize/resume"):
-        resume_url = AUTH_DOMAIN + redirect_url
-        async with session.get(resume_url, headers=HEADERS, allow_redirects=False) as resp:
-            final_url = resp.headers.get("Location")
-            if final_url:
-                parsed = urllib.parse.urlparse(final_url)
-                code = urllib.parse.parse_qs(parsed.query).get("code", [None])[0]
-    else:
-        parsed = urllib.parse.urlparse(redirect_url or "")
-        code = urllib.parse.parse_qs(parsed.query).get("code", [None])[0]
+        # -------------------
+        # Step 2: /u/login
+        # -------------------
+        login_url = f"{AUTH_DOMAIN}/u/login?state={state}"
+        form_data = {
+            "state": state,
+            "username": username,
+            "password": password,
+            "action": "default",
+        }
+        LOGGER.debug("Auth0 Step2: POST %s", login_url)
+        async with session.post(
+            login_url, headers=HEADERS, data=form_data, allow_redirects=False
+        ) as resp:
+            redirect_url = resp.headers.get("Location")
+        LOGGER.debug("Auth0 Step2: redirect=%s", redirect_url)
 
-    if not code:
-        raise CannotConnect("No authorization code received")
+        code = None
+        if redirect_url and redirect_url.startswith("/authorize/resume"):
+            resume_url = AUTH_DOMAIN + redirect_url
+            async with session.get(
+                resume_url, headers=HEADERS, allow_redirects=False
+            ) as resp:
+                final_url = resp.headers.get("Location")
+                if final_url:
+                    parsed = urllib.parse.urlparse(final_url)
+                    code = urllib.parse.parse_qs(parsed.query).get("code", [None])[0]
+        else:
+            parsed = urllib.parse.urlparse(redirect_url or "")
+            code = urllib.parse.parse_qs(parsed.query).get("code", [None])[0]
 
-    # 3. Exchange code for tokens
-    token_url = f"{AUTH_DOMAIN}/oauth/token"
-    payload = {
-        "grant_type": "authorization_code",
-        "client_id": CLIENT_ID,
-        "code": code,
-        "redirect_uri": REDIRECT_URI,
-    }
-    async with session.post(token_url, headers={"Content-Type": "application/json"}, json=payload) as resp:
-        token_data = await resp.json()
-    if "access_token" not in token_data:
-        raise InvalidAuth("Auth0 did not return an access token")
+        if not code:
+            raise SharkIqAuthError("No authorization code received")
+        LOGGER.debug("Auth0 Step2: Got code=%s", code)
 
-    return token_data
+        # -------------------
+        # Step 3: /oauth/token
+        # -------------------
+        token_url = f"{AUTH_DOMAIN}/oauth/token"
+        payload = {
+            "grant_type": "authorization_code",
+            "client_id": CLIENT_ID,
+            "code": code,
+            "redirect_uri": REDIRECT_URI,
+        }
+        LOGGER.debug("Auth0 Step3: POST %s", token_url)
+        async with session.post(
+            token_url, headers={"Content-Type": "application/json"}, json=payload
+        ) as resp:
+            token_data = await resp.json()
+        LOGGER.debug("Auth0 Step3: token response=%s", token_data)
+
+        if "access_token" not in token_data:
+            raise SharkIqAuthError("Auth0 did not return an access token")
+
+        return token_data
 
