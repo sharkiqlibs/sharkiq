@@ -9,14 +9,15 @@ found at:
 
 import aiohttp
 import requests
-import urllib.parse
+import urllib.parseimport logging
+LOGGER = logging.getLogger(__name__)
+
 from auth0.authentication import GetToken
 from auth0.asyncify import asyncify
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional
 from .const import (
     DEVICE_URL,
-    LOGGER,
     LOGIN_URL,
     AUTH0_HOST,
     SHARK_APP_ID,
