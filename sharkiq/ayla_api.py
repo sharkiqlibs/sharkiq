@@ -560,9 +560,15 @@ class Auth0Client:
             parsed = urllib.parse.urlparse(redirect_url or "")
             code = urllib.parse.parse_qs(parsed.query).get("code", [None])[0]
 
+        # ✅ NEW: handle deep link redirect
+        if not code and redirect_url and redirect_url.startswith(Auth0Client.REDIRECT_URI):
+            parsed = urllib.parse.urlparse(redirect_url)
+            code = urllib.parse.parse_qs(parsed.query).get("code", [None])[0]
+
         if not code:
-            raise SharkIqAuthError("No authorization code received")
+            raise SharkIqAuthError(f"Auth0 login failed: {redirect_url}")
         LOGGER.debug("Auth0 Step2: Got code=%s", code)
+
 
         # -------------------
         # Step 3: /oauth/token
