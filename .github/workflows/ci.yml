@@ -31,15 +31,13 @@ jobs:
           pip install -r requirements.txt
           pip list
       - name: Pytest with coverage reporting
-        run: pytest --cov=sharkiq --cov-report=xml
+        run: pytest --cov=sharkiq --junitxml=junit.xml -o junit_family=legacy
       - name: Upload coverage to Codecov
         if: matrix.python-version == 3.13 && matrix.os == 'ubuntu'
-        uses: codecov/codecov-action@v5.5.0
+        uses: codecov/test-results-action@v1
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
-          file: ./coverage.xml
-          flags: unittests
-          name: codecov-umbrella
+
   docs:
     name: Generate and Upload Documentation
     runs-on: ubuntu-latest
