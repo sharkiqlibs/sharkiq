@@ -5,19 +5,11 @@ import codecs
 import base64
 import urllib.parse
 
-OAUTH = {
-    "LOGIN_URL": "https://login.sharkninja.com/authorize",
-    "CLIENT_ID": "wsguxrqm77mq4LtrTrwg8ZJUxmSrexGi",
-    "SCOPES": "openid profile email offline_access read:users read:current_user read:user_idp_tokens",
-    "AUTH0_CLIENT": "eyJ2ZXJzaW9uIjoiMi42LjAiLCJuYW1lIjoiQXV0aDAuc3dpZnQiLCJlbnI6eyJpVCI6IjE3LjYiLCJzd2lmdCI6IjUueCJ9fQ=="
-}
-
 from .const import (
     AUTH0_URL,
     AUTH0_CLIENT_ID,
     AUTH0_SCOPES,
     AUTH0_REDIRECT_URI,
-    AUTH0_CLIENT,
     EU_AUTH0_URL
 )
 
@@ -36,8 +28,7 @@ class FallbackAuth:
     + '&code_challenge=' + FallbackAuth.urlEncode(challenge)
     + '&screen_hint=signin'
     + '&code_challenge_method=S256'
-    + '&ui_locales=en'
-    + '&auth0Client=' + AUTH0_CLIENT)
+    + '&ui_locales=en')
     
     return url
 
