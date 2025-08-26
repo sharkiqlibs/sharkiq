@@ -21,7 +21,6 @@ from .const import (
     AUTH0_HOST,
     SHARK_APP_ID,
     SHARK_APP_SECRET,
-    AUTH0_CLIENT,
     AUTH0_URL,
     AUTH0_CLIENT_ID,
     AUTH0_SCOPES,
