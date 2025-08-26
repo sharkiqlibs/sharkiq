@@ -33,7 +33,7 @@ jobs:
       - name: Pytest with coverage reporting
         run: pytest --cov=sharkiq --junitxml=junit.xml -o junit_family=legacy
       - name: Upload coverage to Codecov
-        if: matrix.python-version == 3.13 && matrix.os == 'ubuntu'
+        if: matrix.python-version == 3.13 && matrix.os == 'ubuntu' && ${{ !cancelled() }}
         uses: codecov/test-results-action@v1
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
