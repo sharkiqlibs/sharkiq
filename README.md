@@ -1,8 +1,8 @@
-[![codecov](https://codecov.io/gh/JeffResc/sharkiq/branch/main/graph/badge.svg?token=DO96BWVXA7)](https://codecov.io/gh/JeffResc/sharkiq)
+[![codecov](https://codecov.io/gh/sharkiqlibs/sharkiq/graph/badge.svg?token=DO96BWVXA7)](https://codecov.io/gh/sharkiqlibs/sharkiq)
 [![PyPI](https://img.shields.io/pypi/v/sharkiq)](https://pypi.org/project/sharkiq/)
 [![PyPI - Downloads](https://img.shields.io/pypi/dm/sharkiq)](https://pypi.org/project/sharkiq/)
-[![GitHub](https://img.shields.io/github/license/JeffResc/sharkiq)](https://github.com/JeffResc/sharkiq)
-[![Documentation](https://img.shields.io/badge/Documentation-2c3e50)](https://jeffresc.github.io/sharkiq/)
+[![GitHub](https://img.shields.io/github/license/sharkiqlibs/sharkiq)](https://github.com/sharkiqlibs/sharkiq)
+[![Documentation](https://img.shields.io/badge/Documentation-2c3e50)](https://sharkiqlibs.github.io/sharkiq/)
 # sharkiq
 Unofficial SDK for Shark IQ robot vacuums, designed primarily to support an integration for [Home Assistant](https://www.home-assistant.io/).
 
@@ -18,7 +18,7 @@ pip install sharkiq
 Examples can be found in the [examples directory](examples/).
 
 ## Documentation
-You can view the latest documentation [here](https://jeffresc.github.io/sharkiq/).
+You can view the latest documentation [here](https://sharkiqlibs.github.io/sharkiq/).
 
 ## TODOs:
  * Add support for mapping

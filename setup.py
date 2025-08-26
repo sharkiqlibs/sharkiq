@@ -28,7 +28,7 @@ setup(
     description="Python API for Shark IQ robots",
     long_description=README,
     long_description_content_type="text/markdown",
-    url="https://github.com/JeffResc/sharkiq-ng",
+    url="https://github.com/sharkiqlibs/sharkiq-ng",
     author="Jeff Rescignano",
     author_email="jeff@jeffresc.dev",
     license="MIT",
