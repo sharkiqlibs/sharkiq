@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=61.0", "wheel"]
+requires = ["setuptools>=61.0", "setuptools-scm>=9.2.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -47,5 +47,6 @@ dev = [
 [tool.setuptools]
 packages = ["sharkiq"]
 
-[tool.setuptools.dynamic]
-version = {attr = "sharkiq.__version__"}
+[tool.setuptools_scm]
+version_scheme = "python-simplified-semver"
+local_scheme = "no-local-version"
