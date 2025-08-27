@@ -10,4 +10,14 @@ from .exc import (
 )
 from .sharkiq import OperatingModes, PowerModes,  Properties, SharkIqVacuum
 
-__version__ = '1.4.0'
+try:
+    from importlib.metadata import version, PackageNotFoundError
+except ImportError:
+    # Python < 3.8
+    from importlib_metadata import version, PackageNotFoundError
+
+try:
+    __version__ = version("sharkiq")
+except PackageNotFoundError:
+    # Package is not installed
+    __version__ = "unknown"
