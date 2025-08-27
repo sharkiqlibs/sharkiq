@@ -2,7 +2,7 @@ import pytest
 from unittest.mock import AsyncMock, patch, MagicMock
 from sharkiq.auth0 import Auth0Client
 from sharkiq.exc import SharkIqAuthError
-from sharkiq.const import AUTH0_URL, EU_AUTH0_URL, AUTH0_CLIENT_ID, AUTH0_REDIRECT_URI, AUTH0_SCOPES
+from sharkiq.const import AUTH0_URL, EU_AUTH0_URL, AUTH0_REDIRECT_URI
 
 
 class MockAsyncContextManager:
