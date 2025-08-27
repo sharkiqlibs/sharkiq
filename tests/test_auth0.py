@@ -1,5 +1,4 @@
 import pytest
-import aiohttp
 from unittest.mock import AsyncMock, patch, MagicMock
 from sharkiq.auth0 import Auth0Client
 from sharkiq.exc import SharkIqAuthError
