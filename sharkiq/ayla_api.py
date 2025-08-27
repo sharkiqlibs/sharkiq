@@ -138,6 +138,12 @@ class AylaApi:
     
     @property
     def _auth0_login_headers(self) -> Dict[str, Dict]:
+        """
+        Headers for the Auth0 login flow.
+        
+        Returns:
+            A dict containing the headers to send for the Auth0 login flow.
+        """
         return {
             "Accept": "application/json, text/plain, */*",
             "Accept-Encoding": "gzip, deflate, br, zstd",
@@ -160,6 +166,12 @@ class AylaApi:
     
     @property
     def _ayla_login_headers(self) -> Dict[str, Dict]:
+        """
+        Headers for the Ayla login flow.
+        
+        Returns:
+            A dict containing the headers to send for the Ayla login flow.
+        """
         return {
             "Content-Type": "application/json",
             "User-Agent": BROWSER_USERAGENT
@@ -283,6 +295,12 @@ class AylaApi:
         self._clear_auth()
 
     def gen_fallback_url(self):
+        """
+        Generate a URL for the fallback authentication flow.
+        
+        Returns:
+            The URL for the fallback authentication flow.
+        """
         return FallbackAuth.GenerateFallbackAuthURL(self.europe)
 
     @property
@@ -466,6 +484,11 @@ class AylaApi:
         return devices
     
     async def async_close_session(self):
+        """
+        Close the shared aiohttp ClientSession.
+
+        This should be called when you are finished with the AylaApi object.
+        """
         shared_session = self.ensure_session()
         if shared_session is not None:
             shared_session.close()

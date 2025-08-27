@@ -15,6 +15,15 @@ from .const import (
 
 class FallbackAuth:
   def GenerateFallbackAuthURL(europe: bool):
+    """
+    Generate an authorization URL for Auth0 that mimics the Shark app's behavior.
+
+    Args:
+        europe: If True, use the EU Auth0 URL and app ID/secret.
+
+    Returns:
+        The authorization URL.
+    """
     state = FallbackAuth.generateRandomString(43)
     verification = FallbackAuth.generateRandomString(43)
     challenge = FallbackAuth.generateChallengeB64Hash(verification)
@@ -33,6 +42,15 @@ class FallbackAuth:
     return url
 
   def generateRandomString(length):
+    """
+    Generate a random string of alphanumeric characters.
+
+    Args:
+        length: The length of the string to generate.
+
+    Returns:
+        A random string of alphanumeric characters of the specified length.
+    """
     characters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789'
     result = ''
     for _ in range(length):
@@ -42,6 +60,15 @@ class FallbackAuth:
     return result
 
   def generateChallengeB64Hash(verification_code):
+    """
+    Generate a challenge hash for the PKCE flow.
+
+    Args:
+        verification_code: The verification code to use in the hash.
+
+    Returns:
+        str: The challenge hash, base64 encoded with URL safe characters.
+    """
     verification_encoded = codecs.encode(verification_code, 'utf-8')
     verification_sha256 = hashlib.sha256(verification_encoded)
     challenge_b64 = base64.b64encode(verification_sha256.digest()).decode()
@@ -50,4 +77,13 @@ class FallbackAuth:
     return challenge_b64_clean
 
   def urlEncode(s):
+    """
+    URL encode a string.
+
+    Args:
+        s (str): The string to URL encode.
+
+    Returns:
+        str: The URL encoded string.
+    """
     return urllib.parse.quote_plus(s)
