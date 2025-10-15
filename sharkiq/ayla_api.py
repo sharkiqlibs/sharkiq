@@ -229,9 +229,9 @@ class AylaApi:
         """
         ayla_client = await self.ensure_session()
 
-        if use_auth0:
+        if use_auth0 or self.europe:
             AsyncGetToken = asyncify(GetToken)
-            get_token = AsyncGetToken(AUTH0_HOST, AUTH0_CLIENT_ID)
+            get_token = AsyncGetToken(EU_AUTH0_HOST if self.europe else AUTH0_HOST, EU_AUTH0_CLIENT_ID if self.europe else AUTH0_CLIENT_ID)
 
             auth_result = await get_token.login_async(
                 username=self._email,
