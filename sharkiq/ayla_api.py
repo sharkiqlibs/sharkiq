@@ -229,26 +229,31 @@ class AylaApi:
         """
         ayla_client = await self.ensure_session()
 
-        if use_auth0:
-            AsyncGetToken = asyncify(GetToken)
-            get_token = AsyncGetToken(EU_AUTH0_HOST if self.europe else AUTH0_HOST, EU_AUTH0_CLIENT_ID if self.europe else AUTH0_CLIENT_ID)
+        try:
+            if use_auth0:
+                AsyncGetToken = asyncify(GetToken)
+                get_token = AsyncGetToken(EU_AUTH0_HOST if self.europe else AUTH0_HOST, EU_AUTH0_CLIENT_ID if self.europe else AUTH0_CLIENT_ID)
 
-            auth_result = await get_token.login_async(
-                username=self._email,
-                password=self._password,
-                grant_type='password',
-                scope=AUTH0_SCOPES
-            )
+                auth_result = await get_token.login_async(
+                    username=self._email,
+                    password=self._password,
+                    grant_type='password',
+                    scope=AUTH0_SCOPES
+                )
 
-            self._auth0_id_token = auth_result["id_token"]
-        else:
-            auth_result = await Auth0Client.do_auth0_login(
-                ayla_client,
-                self.europe,
-                self._email,
-                self._password
-            )
-            self._auth0_id_token = auth_result["id_token"]
+                self._auth0_id_token = auth_result["id_token"]
+            else:
+                auth_result = await Auth0Client.do_auth0_login(
+                    ayla_client,
+                    self.europe,
+                    self._email,
+                    self._password
+                )
+                self._auth0_id_token = auth_result["id_token"]
+        except Exception:
+            if use_auth0 == False:
+                # Try fallback Auth0 API if default method failed
+                await self.async_sign_in(True)
 
         login_data = self._login_data
         login_url = f"{EU_LOGIN_URL if self.europe else LOGIN_URL}/api/v1/token_sign_in"
