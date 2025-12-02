@@ -93,7 +93,7 @@ class Auth0Client:
             code = urllib.parse.parse_qs(parsed.query).get("code", [None])[0]
 
         # NEW: handle deep link redirect
-        if not code and redirect_url and redirect_url.startswith(Auth0Client.REDIRECT_URI):
+        if not code and redirect_url and redirect_url.startswith(REDIRECT_URI):
             parsed = urllib.parse.urlparse(redirect_url)
             code = urllib.parse.parse_qs(parsed.query).get("code", [None])[0]
 
