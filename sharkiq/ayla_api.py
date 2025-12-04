@@ -10,8 +10,11 @@ found at:
 import aiohttp
 import requests
 
+from auth0.authentication import GetToken
+from auth0.asyncify import asyncify
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional
+from .auth0 import Auth0Client
 from .const import (
     DEVICE_URL,
     LOGIN_URL,
@@ -33,6 +36,7 @@ from .const import (
     EU_AUTH0_CLIENT_ID
 )
 from .exc import SharkIqAuthError, SharkIqAuthExpiringError, SharkIqNotAuthedError
+from .fallback_auth import FallbackAuth
 from .sharkiq import SharkIqVacuum
 
 _session = None
@@ -237,13 +241,19 @@ class AylaApi:
         
         self._auth0_id_token = login_result["id_token"]
 
-    async def async_sign_in(self):
+    async def async_set_cookie(self):
         """
-        Authenticate to Ayla API asynchronously via password grant.
+        Query Auth0 to set session cookies [required for Auth0 support]
         """
+        initial_url = self.gen_fallback_url()
         ayla_client = await self.ensure_session()
+        async with ayla_client.get(initial_url, allow_redirects=False, headers=self._auth0_login_headers, ssl=self.verify_ssl) as auth0_resp:
+            ayla_client.cookie_jar.update_cookies(auth0_resp.cookies)
 
-        # Step 1: Auth0 ROPC to get id_token
+    async def _password_grant_sign_in(self, ayla_client: aiohttp.ClientSession):
+        """
+        Auth0 password grant -> Ayla token_sign_in using aiohttp.
+        """
         token_url = EU_AUTH0_TOKEN_URL if self.europe else AUTH0_TOKEN_URL
         payload = {
             "grant_type": "password",
@@ -265,6 +275,49 @@ class AylaApi:
         if "id_token" not in auth0_json:
             raise SharkIqAuthError("Auth0 response missing id_token")
         self._set_id_token(resp.status, auth0_json)
+
+    async def _legacy_cookie_sign_in(self, ayla_client: aiohttp.ClientSession, force_auth0_sdk: bool = False):
+        """
+        Legacy Auth0 browser-style flow to obtain id_token.
+        """
+        try:
+            if force_auth0_sdk or self.europe:
+                AsyncGetToken = asyncify(GetToken)
+                get_token = AsyncGetToken(EU_AUTH0_HOST if self.europe else AUTH0_HOST, EU_AUTH0_CLIENT_ID if self.europe else AUTH0_CLIENT_ID)
+                auth_result = await get_token.login_async(
+                    username=self._email,
+                    password=self._password,
+                    grant_type='password',
+                    scope=AUTH0_SCOPES
+                )
+                self._auth0_id_token = auth_result["id_token"]
+            else:
+                auth_result = await Auth0Client.do_auth0_login(
+                    ayla_client,
+                    self.europe,
+                    self._email,
+                    self._password
+                )
+                self._auth0_id_token = auth_result["id_token"]
+        except Exception as err:
+            if not force_auth0_sdk:
+                # Retry with Auth0 SDK path as a last resort
+                return await self._legacy_cookie_sign_in(ayla_client, force_auth0_sdk=True)
+            raise err
+
+    async def async_sign_in(self):
+        """
+        Authenticate to Ayla API asynchronously.
+
+        Attempts password grant first, then automatically falls back to the legacy cookie-based Auth0 flow.
+        """
+        ayla_client = await self.ensure_session()
+
+        try:
+            await self._password_grant_sign_in(ayla_client)
+        except Exception:
+            # Password grant failed; try legacy flow (will raise if it also fails)
+            await self._legacy_cookie_sign_in(ayla_client)
 
         # Step 2: Ayla token_sign_in exchange
         login_data = self._login_data
@@ -320,6 +373,15 @@ class AylaApi:
         async with ayla_client.post(f"{EU_LOGIN_URL if self.europe else LOGIN_URL:s}/users/sign_out.json", json=self.sign_out_data) as _:
             pass
         self._clear_auth()
+
+    def gen_fallback_url(self):
+        """
+        Generate a URL for the fallback authentication flow.
+        
+        Returns:
+            The URL for the fallback authentication flow.
+        """
+        return FallbackAuth.GenerateFallbackAuthURL(self.europe)
 
     @property
     def auth_expiration(self) -> Optional[datetime]:
