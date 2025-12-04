@@ -19,7 +19,7 @@ jobs:
         python-version: ['3.9', '3.10', '3.11', '3.12', '3.13']
     steps:
       - name: Checking out code from GitHub
-        uses: actions/checkout@v5.0.0
+        uses: actions/checkout@v6.0.1
       - name: Set up Python ${{ matrix.python }}
         uses: actions/setup-python@v6.0.0
         with:
@@ -45,7 +45,7 @@ jobs:
     needs: [test]
     steps:
     - name: Checking out code from GitHub
-      uses: actions/checkout@v5.0.0
+      uses: actions/checkout@v6.0.1
     - name: Set up Python 3.13
       uses: actions/setup-python@v6.0.0
       with:
