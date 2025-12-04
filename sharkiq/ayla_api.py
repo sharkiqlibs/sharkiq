@@ -22,6 +22,7 @@ from .const import (
     SHARK_APP_ID,
     SHARK_APP_SECRET,
     AUTH0_URL,
+    AUTH0_TOKEN_URL,
     AUTH0_CLIENT_ID,
     AUTH0_SCOPES,
     BROWSER_USERAGENT,
@@ -31,16 +32,23 @@ from .const import (
     EU_SHARK_APP_ID,
     EU_SHARK_APP_SECRET,
     EU_AUTH0_URL,
+    EU_AUTH0_TOKEN_URL,
     EU_AUTH0_CLIENT_ID
 )
 from .exc import SharkIqAuthError, SharkIqAuthExpiringError, SharkIqNotAuthedError
-from .sharkiq import SharkIqVacuum
 from .fallback_auth import FallbackAuth
+from .sharkiq import SharkIqVacuum
 
 _session = None
 
 
-def get_ayla_api(username: str, password: str, websession: Optional[aiohttp.ClientSession] = None, europe: bool = False):
+def get_ayla_api(
+    username: str,
+    password: str,
+    websession: Optional[aiohttp.ClientSession] = None,
+    europe: bool = False,
+    verify_ssl: bool = True,
+):
     """
     Get an AylaApi object.
 
@@ -54,9 +62,26 @@ def get_ayla_api(username: str, password: str, websession: Optional[aiohttp.Clie
         An AylaApi object.
     """
     if europe:
-        return AylaApi(username, password, EU_SHARK_APP_ID, EU_AUTH0_CLIENT_ID, EU_SHARK_APP_SECRET, websession=websession, europe=europe)
+        return AylaApi(
+            username,
+            password,
+            EU_SHARK_APP_ID,
+            EU_AUTH0_CLIENT_ID,
+            EU_SHARK_APP_SECRET,
+            websession=websession,
+            europe=europe,
+            verify_ssl=verify_ssl,
+        )
     else:
-        return AylaApi(username, password, SHARK_APP_ID, AUTH0_CLIENT_ID, SHARK_APP_SECRET, websession=websession)
+        return AylaApi(
+            username,
+            password,
+            SHARK_APP_ID,
+            AUTH0_CLIENT_ID,
+            SHARK_APP_SECRET,
+            websession=websession,
+            verify_ssl=verify_ssl,
+        )
 
 
 class AylaApi:
@@ -70,7 +95,8 @@ class AylaApi:
             auth0_client_id: str,
             app_secret: str,
             websession: Optional[aiohttp.ClientSession] = None,
-            europe: bool = False):
+            europe: bool = False,
+            verify_ssl: bool = True):
         """
         Initialize the AylaApi object.
 
@@ -94,6 +120,8 @@ class AylaApi:
         self._app_secret = app_secret
         self.websession = websession
         self.europe = europe
+        # Allow disabling SSL verification if the Ayla host presents a mismatched cert in some environments.
+        self.verify_ssl = verify_ssl
 
     async def ensure_session(self) -> aiohttp.ClientSession:
         """
@@ -219,28 +247,49 @@ class AylaApi:
         """
         initial_url = self.gen_fallback_url()
         ayla_client = await self.ensure_session()
-
-        async with ayla_client.get(initial_url, allow_redirects=False, headers=self._auth0_login_headers) as auth0_resp:
+        async with ayla_client.get(initial_url, allow_redirects=False, headers=self._auth0_login_headers, ssl=self.verify_ssl) as auth0_resp:
             ayla_client.cookie_jar.update_cookies(auth0_resp.cookies)
 
-    async def async_sign_in(self, use_auth0=False):
+    async def _password_grant_sign_in(self, ayla_client: aiohttp.ClientSession):
         """
-        Authenticate to Ayla API asynchronously via Auth0 [requires cookies]
+        Auth0 password grant -> Ayla token_sign_in using aiohttp.
         """
-        ayla_client = await self.ensure_session()
+        token_url = EU_AUTH0_TOKEN_URL if self.europe else AUTH0_TOKEN_URL
+        payload = {
+            "grant_type": "password",
+            "client_id": EU_AUTH0_CLIENT_ID if self.europe else AUTH0_CLIENT_ID,
+            "username": self._email,
+            "password": self._password,
+            "scope": AUTH0_SCOPES,
+        }
+        async with ayla_client.post(
+            token_url,
+            json=payload,
+            headers={"Content-Type": "application/json"},
+            ssl=self.verify_ssl,
+            timeout=15,
+        ) as resp:
+            if resp.status >= 400:
+                raise SharkIqAuthError(f"Auth0 password grant failed: {resp.status} {await resp.text()}")
+            auth0_json = await resp.json()
+        if "id_token" not in auth0_json:
+            raise SharkIqAuthError("Auth0 response missing id_token")
+        self._set_id_token(resp.status, auth0_json)
 
+    async def _legacy_cookie_sign_in(self, ayla_client: aiohttp.ClientSession, force_auth0_sdk: bool = False):
+        """
+        Legacy Auth0 browser-style flow to obtain id_token.
+        """
         try:
-            if use_auth0 or self.europe:
+            if force_auth0_sdk or self.europe:
                 AsyncGetToken = asyncify(GetToken)
                 get_token = AsyncGetToken(EU_AUTH0_HOST if self.europe else AUTH0_HOST, EU_AUTH0_CLIENT_ID if self.europe else AUTH0_CLIENT_ID)
-
                 auth_result = await get_token.login_async(
                     username=self._email,
                     password=self._password,
                     grant_type='password',
                     scope=AUTH0_SCOPES
                 )
-
                 self._auth0_id_token = auth_result["id_token"]
             else:
                 auth_result = await Auth0Client.do_auth0_login(
@@ -250,16 +299,42 @@ class AylaApi:
                     self._password
                 )
                 self._auth0_id_token = auth_result["id_token"]
-        except Exception:
-            if use_auth0 == False:
-                # Try fallback Auth0 API if default method failed
-                await self.async_sign_in(True)
+        except Exception as err:
+            if not force_auth0_sdk:
+                # Retry with Auth0 SDK path as a last resort
+                return await self._legacy_cookie_sign_in(ayla_client, force_auth0_sdk=True)
+            raise err
 
+    async def async_sign_in(self):
+        """
+        Authenticate to Ayla API asynchronously.
+
+        Attempts password grant first, then automatically falls back to the legacy cookie-based Auth0 flow.
+        """
+        ayla_client = await self.ensure_session()
+
+        try:
+            await self._password_grant_sign_in(ayla_client)
+        except Exception:
+            # Password grant failed; try legacy flow (will raise if it also fails)
+            await self._legacy_cookie_sign_in(ayla_client)
+
+        # Step 2: Ayla token_sign_in exchange
         login_data = self._login_data
         login_url = f"{EU_LOGIN_URL if self.europe else LOGIN_URL}/api/v1/token_sign_in"
-        async with ayla_client.post(login_url, json=login_data, headers=self._ayla_login_headers) as login_resp:
-            login_resp_json = await login_resp.json()
-            self._set_credentials(login_resp.status, login_resp_json)
+        async with ayla_client.post(
+            login_url,
+            json=login_data,
+            headers=self._ayla_login_headers,
+            ssl=self.verify_ssl,
+            timeout=15,
+        ) as r2:
+            try:
+                login_json = await r2.json()
+            except Exception:
+                login_json = {"errors": await r2.text()}
+            self._set_credentials(r2.status, login_json)
+        return self._access_token
 
 
     async def async_refresh_auth(self):
@@ -408,7 +483,7 @@ class AylaApi:
             The response from the request.
         """
         headers = self._get_headers(kwargs)
-        return requests.request(method, url, headers=headers, **kwargs)
+        return requests.request(method, url, headers=headers, verify=self.verify_ssl, **kwargs)
 
     async def async_request(self, http_method: str, url: str, **kwargs):
         """
@@ -424,7 +499,7 @@ class AylaApi:
         """
         ayla_client = await self.ensure_session()
         headers = self._get_headers(kwargs)
-        result = ayla_client.request(http_method, url, headers=headers, **kwargs)
+        result = ayla_client.request(http_method, url, headers=headers, ssl=self.verify_ssl, **kwargs)
 
         return result
 
@@ -497,4 +572,3 @@ class AylaApi:
         shared_session = self.ensure_session()
         if shared_session is not None:
             shared_session.close()
-
