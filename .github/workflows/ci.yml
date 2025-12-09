@@ -59,7 +59,7 @@ jobs:
       run: pdoc --html sharkiq
     - name: Deploy Documentation
       if: github.event_name == 'push'
-      uses: JamesIves/github-pages-deploy-action@v4.7.3
+      uses: JamesIves/github-pages-deploy-action@v4.7.6
       with:
         branch: docs
         folder: html/sharkiq
