@@ -24,6 +24,7 @@ dependencies = [
     "aiohttp>=3.8.1",
     "auth0-python>=4.10.0",
     "requests>=2.27.1",
+    "protobuf>=4.21.0",
 ]
 
 [project.urls]
@@ -32,6 +33,9 @@ Repository = "https://github.com/sharkiqlibs/sharkiq"
 Issues = "https://github.com/sharkiqlibs/sharkiq/issues"
 
 [project.optional-dependencies]
+floorplan = [
+    "Pillow>=9.0.0",
+]
 test = [
     "pytest==8.4.2",
     "pytest-asyncio==1.2.0",

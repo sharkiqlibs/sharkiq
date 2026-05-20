@@ -27,7 +27,27 @@ class SharkIqNotAuthedError(SharkIqError):
     def __init__(self, msg=NOT_AUTHED_MESSAGE, *args):
         super().__init__(msg, *args)
 
+class SharkIqAuthVerificationRequiredError(SharkIqAuthError):
+    """Exception when Auth0 requires additional verification (MFA/CAPTCHA/suspicious request)."""
+    def __init__(self, msg="SharkNinja is blocking automated login (anti-bot protection). Wait 24-48 hours, then try again.", *args):
+        super().__init__(msg, *args)
+
 
 class SharkIqReadOnlyPropertyError(SharkIqError):
     """Tried to set a read-only property"""
     pass
+
+class SkegoxApiError(SharkIqError):
+    """Skegox API request failure."""
+
+
+class SkegoxAuthError(SharkIqError):
+    """Authentication failure with the Skegox/Auth0 API."""
+
+
+class SkegoxAuthRequiresVerificationError(SkegoxAuthError):
+    """Auth0 requires additional verification (MFA, CAPTCHA, etc.)."""
+
+
+class SkegoxAuthLockedError(SkegoxAuthError):
+    """Account locked or rate-limited — do not retry."""

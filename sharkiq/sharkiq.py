@@ -122,21 +122,27 @@ class Properties(enum.Enum):
 
 
 ERROR_MESSAGES = {
+    0: "No error",
     1: "Side wheel is stuck",
     2: "Side brush is stuck",
     3: "Suction motor failed",
     4: "Brushroll stuck",
-    5: "Side wheel is stuck (2)",
+    5: "Charging error",
     6: "Bumper is stuck",
     7: "Cliff sensor is blocked",
     8: "Battery power is low",
-    9: "No Dustbin",
+    9: "No dustbin",
     10: "Fall sensor is blocked",
     11: "Front wheel is stuck",
+    12: "Wrong power adapter",
     13: "Switched off",
     14: "Magnetic strip error",
     16: "Top bumper is stuck",
     18: "Wheel encoder error",
+    21: "Boot error",
+    23: "Base placement error",
+    24: "Critical low battery",
+    26: "Dustbin blockage",
     40: "Dustbin is blocked",
 }
 
