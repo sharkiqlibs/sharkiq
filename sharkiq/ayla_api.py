@@ -35,7 +35,7 @@ from .const import (
     EU_AUTH0_TOKEN_URL,
     EU_AUTH0_CLIENT_ID
 )
-from .exc import SharkIqAuthError, SharkIqAuthExpiringError, SharkIqNotAuthedError
+from .exc import SharkIqAuthError, SharkIqAuthExpiringError, SharkIqNotAuthedError, SharkIqAuthVerificationRequiredError
 from .fallback_auth import FallbackAuth
 from .sharkiq import SharkIqVacuum
 
@@ -270,7 +270,12 @@ class AylaApi:
             timeout=15,
         ) as resp:
             if resp.status >= 400:
-                raise SharkIqAuthError(f"Auth0 password grant failed: {resp.status} {await resp.text()}")
+                body = await resp.text()
+                if "requires_verification" in body:
+                    raise SharkIqAuthVerificationRequiredError(
+                        f"Auth0 requires verification: {body}"
+                    )
+                raise SharkIqAuthError(f"Auth0 password grant failed: {resp.status} {body}")
             auth0_json = await resp.json()
         if "id_token" not in auth0_json:
             raise SharkIqAuthError("Auth0 response missing id_token")
@@ -299,7 +304,12 @@ class AylaApi:
                     self._password
                 )
                 self._auth0_id_token = auth_result["id_token"]
+        except SharkIqAuthVerificationRequiredError:
+            raise
         except Exception as err:
+            err_str = str(err).lower()
+            if "suspicious request requires verification" in err_str or "requires_verification" in err_str:
+                raise SharkIqAuthVerificationRequiredError(str(err)) from err
             if not force_auth0_sdk:
                 # Retry with Auth0 SDK path as a last resort
                 return await self._legacy_cookie_sign_in(ayla_client, force_auth0_sdk=True)
@@ -315,6 +325,8 @@ class AylaApi:
 
         try:
             await self._password_grant_sign_in(ayla_client)
+        except SharkIqAuthVerificationRequiredError:
+            raise
         except Exception:
             # Password grant failed; try legacy flow (will raise if it also fails)
             await self._legacy_cookie_sign_in(ayla_client)
