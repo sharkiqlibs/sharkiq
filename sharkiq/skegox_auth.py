@@ -10,7 +10,7 @@ from __future__ import annotations
 import base64
 import json
 import logging
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any, Callable
 
@@ -62,14 +62,20 @@ class AuthTokens:
         tokens.auth0_access_token = data.get("auth0_access_token")
         if expiry_str := data.get("auth0_expiry"):
             try:
-                tokens.auth0_expiry = datetime.fromisoformat(expiry_str)
+                dt = datetime.fromisoformat(expiry_str)
+                if dt.tzinfo is None:
+                    dt = dt.replace(tzinfo=timezone.utc)
+                tokens.auth0_expiry = dt
             except (ValueError, TypeError):
                 pass
         tokens.ayla_access_token = data.get("ayla_access_token")
         tokens.ayla_refresh_token = data.get("ayla_refresh_token")
         if expiry_str := data.get("ayla_expiry"):
             try:
-                tokens.ayla_expiry = datetime.fromisoformat(expiry_str)
+                dt = datetime.fromisoformat(expiry_str)
+                if dt.tzinfo is None:
+                    dt = dt.replace(tzinfo=timezone.utc)
+                tokens.ayla_expiry = dt
             except (ValueError, TypeError):
                 pass
         tokens.household_id = data.get("household_id")
@@ -120,6 +126,10 @@ class SkegoxAuthManager:
     ) -> None:
         self._username = username
         self._password = password
+        if region not in REGION_CONFIGS:
+            raise SkegoxAuthError(
+                f"Unknown region '{region}'. Valid regions: {list(REGION_CONFIGS.keys())}"
+            )
         self._region_config = REGION_CONFIGS[region]
         self._tokens = AuthTokens.from_dict(token_store) if token_store else AuthTokens()
         self._on_tokens_changed = on_tokens_changed

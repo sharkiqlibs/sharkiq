@@ -27,6 +27,10 @@ API_TIMEOUT = 20
 REGION_ELSEWHERE = "elsewhere"
 REGION_EUROPE = "europe"
 
+# Power mode mappings shared between Ayla and Skegox backends
+AYLA_TO_SKEGOX_POWER = {1: 0, 0: 1, 2: 2}  # ECO=1->0, NORMAL=0->1, MAX=2->2
+SKEGOX_TO_AYLA_POWER = {v: k for k, v in AYLA_TO_SKEGOX_POWER.items()}
+
 @dataclass(frozen=True)
 class RegionConfig:
     auth0_url: str

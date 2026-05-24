@@ -116,7 +116,7 @@ class TestSkegoxAuthManager:
             password="password123",
             region=REGION_EUROPE,
         )
-        assert REGION_EUROPE in mgr.region.auth0_url
+        assert "logineu" in mgr.region.auth0_url
 
     def test_save_tokens_calls_callback(self):
         saved = []

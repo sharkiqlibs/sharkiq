@@ -10,6 +10,7 @@ from pprint import pformat
 from typing import Any, Dict, Iterable, List, Optional, Set, Union, TYPE_CHECKING
 from .const import DEVICE_URL, EU_DEVICE_URL
 from .exc import SharkIqReadOnlyPropertyError
+from .utils import clean_property_name as _clean_property_name
 
 try:
     import ujson as json
@@ -145,22 +146,6 @@ ERROR_MESSAGES = {
     26: "Dustbin blockage",
     40: "Dustbin is blocked",
 }
-
-
-def _clean_property_name(raw_property_name: str) -> str:
-    """
-    Clean up property names.
-    
-    Args:
-        raw_property_name: The raw property name.
-
-    Returns:
-        The cleaned property name.
-    """
-    if raw_property_name[:4].upper() in ['SET_', 'GET_']:
-        return raw_property_name[4:]
-    else:
-        return raw_property_name
 
 
 class SharkIqVacuum:

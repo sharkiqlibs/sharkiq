@@ -12,6 +12,7 @@ import logging
 import struct
 from typing import TYPE_CHECKING, Any
 
+from .const import AYLA_TO_SKEGOX_POWER, SKEGOX_TO_AYLA_POWER
 from .sharkiq import ERROR_MESSAGES
 
 if TYPE_CHECKING:
@@ -54,12 +55,7 @@ OP_MODE_PAUSE = 1
 OP_MODE_START = 2
 OP_MODE_RETURN = 3
 
-POWER_ECO = 1
-POWER_NORMAL = 0
-POWER_MAX = 2
 
-AYLA_TO_SKEGOX_POWER = {POWER_ECO: 0, POWER_NORMAL: 1, POWER_MAX: 2}
-SKEGOX_TO_AYLA_POWER = {v: k for k, v in AYLA_TO_SKEGOX_POWER.items()}
 
 class SkegoxDevice:
     """Represents a Shark vacuum via the Skegox API.
@@ -459,7 +455,7 @@ class SkegoxDevice:
                 elif length >= 3:
                     pp = 0
                     while pp < len(fd) and idx < palette_count:
-                        if pp + 3 < len(fd):
+                        if pp + 3 <= len(fd):
                             r = fd[pp]
                             g = fd[pp + 1]
                             b = fd[pp + 2]
@@ -628,8 +624,7 @@ class SkegoxDevice:
             wt = tag & 7
 
             if wt != 2:
-                if wt == 0:
-                    _, cp = _read_varint(container, cp)
+                cp = _skip_protobuf_field(container, cp, wt)
                 continue
 
             field_len, cp = _read_varint(container, cp)
@@ -761,6 +756,20 @@ def _read_varint(data: bytes, pos: int) -> tuple[int, int]:
         shift += 7
     return result, pos
 
+
+def _skip_protobuf_field(data: bytes, pos: int, wt: int) -> int:
+    """Skip a protobuf field value based on wire type. Returns new position."""
+    if wt == 0:  # varint
+        _, pos = _read_varint(data, pos)
+    elif wt == 1:  # 64-bit
+        pos += 8
+    elif wt == 5:  # 32-bit
+        pos += 4
+    else:
+        raise ValueError(f"Unexpected wire type {wt}")
+    return pos
+
+
 def _transform_coord(x: float, y: float) -> tuple[float, float]:
     """Transform protobuf local grid coordinates to JSON centimeter coordinates."""
     x_json = -_COORD_SCALE * x + _COORD_X_OFFSET
@@ -796,6 +805,7 @@ def _parse_room_protobuf(data: bytes) -> tuple[str, list[tuple[float, float]]]:
                 pwt = ptag & 7
 
                 if pwt != 2:
+                    pp = _skip_protobuf_field(field_data, pp, pwt)
                     continue
 
                 plen, pp = _read_varint(field_data, pp)
@@ -828,6 +838,7 @@ def _parse_nogo_protobuf(
             continue
 
         if wt != 2:
+            np = _skip_protobuf_field(data, np, wt)
             continue
 
         field_len, np = _read_varint(data, np)
@@ -848,6 +859,7 @@ def _parse_nogo_protobuf(
                 pwt = ptag & 7
 
                 if pwt != 2:
+                    pp = _skip_protobuf_field(field_data, pp, pwt)
                     continue
 
                 plen, pp = _read_varint(field_data, pp)

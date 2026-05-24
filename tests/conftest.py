@@ -1,3 +1,5 @@
+import asyncio
+
 import pytest
 import os
 from sharkiq.ayla_api import get_ayla_api
@@ -33,5 +35,5 @@ def sample_api():
 @pytest.fixture
 def sample_api_logged_in(sample_api):
     """Sample API object with user-supplied creds after performing auth flow."""
-    sample_api.sign_in()
+    asyncio.run(sample_api.async_sign_in())
     return sample_api
