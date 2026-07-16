@@ -309,15 +309,14 @@ class AylaApi:
         """
         Authenticate to Ayla API asynchronously.
 
-        Attempts password grant first, then automatically falls back to the legacy cookie-based Auth0 flow.
+        Uses the cross-origin Auth0 flow (do_auth0_login) which bypasses
+        Auth0's bot detection.  The direct password grant is no longer used
+        because Auth0 rejects it with "requires_verification" (CAPTCHA),
+        which locks the account after a few attempts.
         """
         ayla_client = await self.ensure_session()
 
-        try:
-            await self._password_grant_sign_in(ayla_client)
-        except Exception:
-            # Password grant failed; try legacy flow (will raise if it also fails)
-            await self._legacy_cookie_sign_in(ayla_client)
+        await self._legacy_cookie_sign_in(ayla_client)
 
         # Step 2: Ayla token_sign_in exchange
         login_data = self._login_data
