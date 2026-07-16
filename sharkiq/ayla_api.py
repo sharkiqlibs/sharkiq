@@ -35,7 +35,12 @@ from .const import (
     EU_AUTH0_TOKEN_URL,
     EU_AUTH0_CLIENT_ID
 )
-from .exc import SharkIqAuthError, SharkIqAuthExpiringError, SharkIqNotAuthedError
+from .exc import (
+    SharkIqAuthError,
+    SharkIqAuthExpiringError,
+    SharkIqNotAuthedError,
+    SharkIqAuthVerificationRequiredError,
+)
 from .fallback_auth import FallbackAuth
 from .sharkiq import SharkIqVacuum
 
@@ -278,32 +283,50 @@ class AylaApi:
 
     async def _legacy_cookie_sign_in(self, ayla_client: aiohttp.ClientSession, force_auth0_sdk: bool = False):
         """
-        Legacy Auth0 browser-style flow to obtain id_token.
+        Obtain an Auth0 id_token.
+
+        For US/"elsewhere" accounts we prefer the cross-origin /co/authenticate
+        + PKCE flow and do not silently fall back to the legacy password-grant
+        SDK path on failure. If Auth0 already dislikes the login attempt,
+        retrying with password grant only triggers the exact anti-bot response
+        we are trying to avoid.
         """
-        try:
-            if force_auth0_sdk or self.europe:
+        if force_auth0_sdk or self.europe:
+            try:
                 AsyncGetToken = asyncify(GetToken)
-                get_token = AsyncGetToken(EU_AUTH0_HOST if self.europe else AUTH0_HOST, EU_AUTH0_CLIENT_ID if self.europe else AUTH0_CLIENT_ID)
+                get_token = AsyncGetToken(
+                    EU_AUTH0_HOST if self.europe else AUTH0_HOST,
+                    EU_AUTH0_CLIENT_ID if self.europe else AUTH0_CLIENT_ID,
+                )
                 auth_result = await get_token.login_async(
                     username=self._email,
                     password=self._password,
                     grant_type='password',
-                    scope=AUTH0_SCOPES
+                    scope=AUTH0_SCOPES,
                 )
                 self._auth0_id_token = auth_result["id_token"]
-            else:
-                auth_result = await Auth0Client.do_auth0_login(
-                    ayla_client,
-                    self.europe,
-                    self._email,
-                    self._password
-                )
-                self._auth0_id_token = auth_result["id_token"]
+                return
+            except Exception as err:
+                err_str = str(err).lower()
+                if "suspicious request requires verification" in err_str or "requires_verification" in err_str:
+                    raise SharkIqAuthVerificationRequiredError(str(err)) from err
+                raise
+
+        try:
+            auth_result = await Auth0Client.do_auth0_login(
+                ayla_client,
+                self.europe,
+                self._email,
+                self._password,
+            )
+            self._auth0_id_token = auth_result["id_token"]
+        except SharkIqAuthVerificationRequiredError:
+            raise
         except Exception as err:
-            if not force_auth0_sdk:
-                # Retry with Auth0 SDK path as a last resort
-                return await self._legacy_cookie_sign_in(ayla_client, force_auth0_sdk=True)
-            raise err
+            err_str = str(err).lower()
+            if "suspicious request requires verification" in err_str or "requires_verification" in err_str:
+                raise SharkIqAuthVerificationRequiredError(str(err)) from err
+            raise
 
     async def async_sign_in(self):
         """
@@ -316,6 +339,9 @@ class AylaApi:
         """
         ayla_client = await self.ensure_session()
 
+        # Skip password-grant fallback when Auth0 explicitly flags the login.
+        # Falling back to password grant after a suspicious-login response just
+        # re-triggers the exact anti-bot path we are trying to avoid.
         await self._legacy_cookie_sign_in(ayla_client)
 
         # Step 2: Ayla token_sign_in exchange

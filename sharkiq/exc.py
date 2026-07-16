@@ -28,6 +28,16 @@ class SharkIqNotAuthedError(SharkIqError):
         super().__init__(msg, *args)
 
 
+class SharkIqAuthVerificationRequiredError(SharkIqAuthError):
+    """Auth0 requires additional verification / flags the login as suspicious."""
+    def __init__(
+        self,
+        msg="SharkNinja is blocking automated login (anti-bot protection). Wait 24-48 hours, then try again.",
+        *args,
+    ):
+        super().__init__(msg, *args)
+
+
 class SharkIqReadOnlyPropertyError(SharkIqError):
     """Tried to set a read-only property"""
     pass
