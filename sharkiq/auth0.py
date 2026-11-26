@@ -1,25 +1,46 @@
 """
 Auth0 API router for authentication to the Shark API
 
-Uses Auth0's cross-origin authentication endpoint (/co/authenticate) with PKCE
-to avoid bot detection / CAPTCHA that blocks the legacy browser form POST flow.
+Two ways to obtain tokens live here:
+
+* Browser sign-in (recommended).  The user signs in on Shark's own login page
+  in a real browser, using the authorization-code flow with PKCE.  The page
+  finishes by redirecting to a ``com.sharkninja.shark://...?code=...`` URL,
+  which is handed back to this library and exchanged for tokens, including a
+  long-lived refresh token.  From then on only the refresh token is used, so
+  the password never passes through this library and Auth0's bot detection
+  (which locks accounts after scripted password logins) is never triggered.
+  See ``build_authorize_url``, ``parse_callback``, ``exchange_code`` and
+  ``refresh_tokens``.
+
+* Scripted password login (legacy, ``do_auth0_login``).  Uses Auth0's
+  cross-origin authentication endpoint (/co/authenticate) with PKCE.  Auth0
+  now flags this for many accounts ("requires_verification").
 """
 
 import aiohttp
+import json
+import re
 import urllib.parse
 import hashlib
 import base64
 import secrets
+from typing import Optional
 from .const import (
     AUTH0_URL,
     EU_AUTH0_URL,
     AUTH0_CLIENT_ID,
     EU_AUTH0_CLIENT_ID,
     AUTH0_REDIRECT_URI,
+    EU_AUTH0_REDIRECT_URI,
+    AUTH0_CALLBACK_SCHEME,
     AUTH0_SCOPES
 )
 
-from .exc import SharkIqAuthError
+from .exc import SharkIqAuthError, SharkIqReauthRequiredError
+
+_CALLBACK_URL_RE = re.compile(re.escape(AUTH0_CALLBACK_SCHEME) + r"[^\s'\"<>]+")
+_BARE_CODE_RE = re.compile(r"^[A-Za-z0-9_\-]{8,}$")
 
 
 def _generate_pkce_pair() -> tuple[str, str]:
@@ -30,8 +51,176 @@ def _generate_pkce_pair() -> tuple[str, str]:
     return verifier, challenge
 
 
+async def _post_token_request(
+    session: aiohttp.ClientSession, europe: bool, payload: dict, verify_ssl: bool, what: str
+) -> dict:
+    """POST to Auth0's /oauth/token and return the token response, or raise."""
+    token_url = f"{EU_AUTH0_URL if europe else AUTH0_URL}/oauth/token"
+    async with session.post(
+        token_url,
+        json=payload,
+        headers={"Content-Type": "application/json"},
+        ssl=verify_ssl,
+        timeout=aiohttp.ClientTimeout(total=15),
+    ) as resp:
+        status = resp.status
+        text = await resp.text()
+
+    try:
+        data = json.loads(text)
+    except ValueError:
+        data = None
+    if not isinstance(data, dict):
+        # Not JSON: a proxy or bot-protection page rather than an answer from Auth0.
+        raise SharkIqAuthError(f"Auth0 {what} failed: HTTP {status} with an unexpected response")
+
+    if status == 200 and "id_token" in data:
+        return data
+
+    error = data.get("error", "unknown_error")
+    description = data.get("error_description", "")
+    message = f"Auth0 {what} failed: HTTP {status} {error} {description}".strip()
+    if error == "invalid_grant":
+        # The code or refresh token itself was rejected.  Only a new sign-in fixes that.
+        raise SharkIqReauthRequiredError(message)
+    raise SharkIqAuthError(message)
+
+
 class Auth0Client:
-    """Auth0 authentication client using the cross-origin flow."""
+    """Auth0 authentication client."""
+
+    @staticmethod
+    def generate_pkce_pair() -> tuple[str, str]:
+        """Return a new ``(code_verifier, code_challenge)`` pair for a browser sign-in."""
+        return _generate_pkce_pair()
+
+    @staticmethod
+    def generate_state() -> str:
+        """Return a random ``state`` value tying a callback to the sign-in that produced it."""
+        return secrets.token_urlsafe(16)
+
+    @staticmethod
+    def build_authorize_url(europe: bool, code_challenge: str, state: str) -> str:
+        """
+        Build the URL of Shark's login page for a browser sign-in.
+
+        Args:
+            europe: If True, use the EU Auth0 tenant.
+            code_challenge: The challenge half of ``generate_pkce_pair()``.
+            state: Value from ``generate_state()``; checked again in ``parse_callback``.
+
+        Returns:
+            The URL the user should open in their browser.
+        """
+        params = {
+            "response_type": "code",
+            "client_id": EU_AUTH0_CLIENT_ID if europe else AUTH0_CLIENT_ID,
+            "redirect_uri": EU_AUTH0_REDIRECT_URI if europe else AUTH0_REDIRECT_URI,
+            "scope": AUTH0_SCOPES,
+            "state": state,
+            "code_challenge": code_challenge,
+            "code_challenge_method": "S256",
+            "prompt": "login",
+        }
+        return f"{EU_AUTH0_URL if europe else AUTH0_URL}/authorize?{urllib.parse.urlencode(params)}"
+
+    @staticmethod
+    def parse_callback(callback: str, expected_state: Optional[str] = None) -> str:
+        """
+        Pull the authorization code out of what the user copied from their browser.
+
+        Accepts the ``com.sharkninja.shark://...?code=...&state=...`` URL, any text
+        containing it (such as the browser console line that reports the redirect),
+        or the bare code.
+
+        Args:
+            callback: The pasted text.
+            expected_state: The ``state`` passed to ``build_authorize_url``.  When the
+                pasted URL carries a different one it belongs to another sign-in attempt.
+
+        Returns:
+            The authorization code.
+        """
+        text = (callback or "").strip().strip("'\"")
+        match = _CALLBACK_URL_RE.search(text)
+        if match:
+            query = urllib.parse.parse_qs(urllib.parse.urlparse(match.group(0)).query)
+        elif "code=" in text or "error=" in text:
+            query = urllib.parse.parse_qs(text.split("?", 1)[-1])
+        elif _BARE_CODE_RE.match(text):
+            return text
+        else:
+            raise SharkIqAuthError(
+                f"That does not look like the sign-in redirect.  Expected a URL starting with {AUTH0_CALLBACK_SCHEME}"
+            )
+
+        if "error" in query:
+            description = query.get("error_description", [""])[0]
+            raise SharkIqAuthError(f"Shark sign-in was not completed: {query['error'][0]} {description}".strip())
+        code = query.get("code", [None])[0]
+        if not code:
+            raise SharkIqAuthError("The sign-in redirect does not contain an authorization code")
+        state = query.get("state", [None])[0]
+        if expected_state and state and state != expected_state:
+            raise SharkIqAuthError("The sign-in redirect belongs to a different sign-in attempt.  Start again from the newest link.")
+        return code
+
+    @staticmethod
+    async def exchange_code(
+        session: aiohttp.ClientSession, europe: bool, code: str, code_verifier: str, verify_ssl: bool = True
+    ) -> dict:
+        """
+        Exchange the authorization code from a browser sign-in for tokens.
+
+        Returns:
+            Auth0's token response: ``id_token``, ``access_token`` and ``refresh_token``.
+        """
+        payload = {
+            "grant_type": "authorization_code",
+            "client_id": EU_AUTH0_CLIENT_ID if europe else AUTH0_CLIENT_ID,
+            "code": code,
+            "code_verifier": code_verifier,
+            "redirect_uri": EU_AUTH0_REDIRECT_URI if europe else AUTH0_REDIRECT_URI,
+        }
+        return await _post_token_request(session, europe, payload, verify_ssl, "code exchange")
+
+    @staticmethod
+    async def refresh_tokens(
+        session: aiohttp.ClientSession, europe: bool, refresh_token: str, verify_ssl: bool = True
+    ) -> dict:
+        """
+        Get a fresh ``id_token`` from a refresh token.  No password and no browser involved.
+
+        Returns:
+            Auth0's token response.  It carries a new ``refresh_token`` when Auth0 rotates
+            them, which must replace the stored one.
+
+        Raises:
+            SharkIqReauthRequiredError: Auth0 rejected the refresh token.
+            SharkIqAuthError: Any other failure, such as rate limiting.
+        """
+        payload = {
+            "grant_type": "refresh_token",
+            "client_id": EU_AUTH0_CLIENT_ID if europe else AUTH0_CLIENT_ID,
+            "refresh_token": refresh_token,
+        }
+        return await _post_token_request(session, europe, payload, verify_ssl, "token refresh")
+
+    @staticmethod
+    def decode_id_token_claims(id_token: str) -> dict:
+        """
+        Read the claims (such as ``email``) from an ``id_token`` without verifying it.
+
+        Only for labelling; the token came straight from Auth0 over TLS and Ayla does
+        the real verification.  Returns an empty dict if the token cannot be read.
+        """
+        try:
+            payload = id_token.split(".")[1]
+            payload += "=" * (-len(payload) % 4)
+            claims = json.loads(base64.urlsafe_b64decode(payload))
+        except (AttributeError, IndexError, ValueError):
+            return {}
+        return claims if isinstance(claims, dict) else {}
 
     @staticmethod
     async def do_auth0_login(

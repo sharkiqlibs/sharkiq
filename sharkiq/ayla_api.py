@@ -10,10 +10,8 @@ found at:
 import aiohttp
 import requests
 
-from auth0.authentication import GetToken
-from auth0.asyncify import asyncify
 from datetime import datetime, timedelta
-from typing import Dict, List, Optional
+from typing import Callable, Dict, List, Optional
 from .auth0 import Auth0Client
 from .const import (
     DEVICE_URL,
@@ -35,7 +33,12 @@ from .const import (
     EU_AUTH0_TOKEN_URL,
     EU_AUTH0_CLIENT_ID
 )
-from .exc import SharkIqAuthError, SharkIqAuthExpiringError, SharkIqNotAuthedError
+from .exc import (
+    SharkIqAuthError,
+    SharkIqAuthExpiringError,
+    SharkIqNotAuthedError,
+    SharkIqReauthRequiredError,
+)
 from .fallback_auth import FallbackAuth
 from .sharkiq import SharkIqVacuum
 
@@ -43,45 +46,48 @@ _session = None
 
 
 def get_ayla_api(
-    username: str,
-    password: str,
+    username: Optional[str] = None,
+    password: Optional[str] = None,
     websession: Optional[aiohttp.ClientSession] = None,
     europe: bool = False,
     verify_ssl: bool = True,
+    auth0_refresh_token: Optional[str] = None,
+    on_auth0_token_update: Optional[Callable[[str], None]] = None,
 ):
     """
     Get an AylaApi object.
 
+    The recommended way to authenticate is a browser sign-in: leave ``password`` unset,
+    then either pass the ``auth0_refresh_token`` saved from an earlier sign-in and call
+    ``async_sign_in()``, or call ``async_sign_in_with_code()`` with the code from a new
+    browser sign-in (see ``Auth0Client.build_authorize_url``).
+
     Args:
-        username: The email address of the user.
-        password: The password of the user.
+        username: The email address of the user.  Optional for browser sign-in.
+        password: The password of the user.  Only used by the legacy scripted login,
+            which Auth0 may flag as suspicious and answer by locking the account.
         websession: A websession to use for the API.  If None, a new session will be created.
         europe: If True, use the EU login URL and app ID/secret.
+        verify_ssl: Set False to skip TLS certificate verification.
+        auth0_refresh_token: Refresh token saved from an earlier browser sign-in.
+        on_auth0_token_update: Called with the new refresh token whenever Auth0 issues
+            one.  Persist it, since the previous token may stop working.
 
     Returns:
         An AylaApi object.
     """
-    if europe:
-        return AylaApi(
-            username,
-            password,
-            EU_SHARK_APP_ID,
-            EU_AUTH0_CLIENT_ID,
-            EU_SHARK_APP_SECRET,
-            websession=websession,
-            europe=europe,
-            verify_ssl=verify_ssl,
-        )
-    else:
-        return AylaApi(
-            username,
-            password,
-            SHARK_APP_ID,
-            AUTH0_CLIENT_ID,
-            SHARK_APP_SECRET,
-            websession=websession,
-            verify_ssl=verify_ssl,
-        )
+    return AylaApi(
+        username,
+        password,
+        EU_SHARK_APP_ID if europe else SHARK_APP_ID,
+        EU_AUTH0_CLIENT_ID if europe else AUTH0_CLIENT_ID,
+        EU_SHARK_APP_SECRET if europe else SHARK_APP_SECRET,
+        websession=websession,
+        europe=europe,
+        verify_ssl=verify_ssl,
+        auth0_refresh_token=auth0_refresh_token,
+        on_auth0_token_update=on_auth0_token_update,
+    )
 
 
 class AylaApi:
@@ -89,14 +95,16 @@ class AylaApi:
 
     def __init__(
             self,
-            email: str,
-            password: str,
+            email: Optional[str],
+            password: Optional[str],
             app_id: str,
             auth0_client_id: str,
             app_secret: str,
             websession: Optional[aiohttp.ClientSession] = None,
             europe: bool = False,
-            verify_ssl: bool = True):
+            verify_ssl: bool = True,
+            auth0_refresh_token: Optional[str] = None,
+            on_auth0_token_update: Optional[Callable[[str], None]] = None):
         """
         Initialize the AylaApi object.
 
@@ -107,10 +115,14 @@ class AylaApi:
             app_secret: The app secret of the Ayla app.
             websession: A websession to use for the API.  If None, a new session will be created.
             europe: If True, use the EU login URL and app ID/secret.
+            auth0_refresh_token: Refresh token saved from an earlier browser sign-in.
+            on_auth0_token_update: Called with the new refresh token whenever Auth0 issues one.
         """
         self._email = email
         self._password = password
         self._auth0_id_token = None  # type: Optional[str]
+        self._auth0_refresh_token = auth0_refresh_token
+        self._on_auth0_token_update = on_auth0_token_update
         self._access_token = None  # type: Optional[str]
         self._refresh_token = None  # type: Optional[str]
         self._auth_expiration = None  # type: Optional[datetime]
@@ -217,6 +229,8 @@ class AylaApi:
             raise SharkIqAuthError(login_result["errors"] + " (Confirm app_id and app_secret are correct)")
         elif status_code == 401:
             raise SharkIqAuthError(login_result["errors"])
+        elif status_code >= 400 or "access_token" not in login_result:
+            raise SharkIqAuthError(f"Ayla sign-in failed: HTTP {status_code} {login_result}")
 
         self._access_token = login_result["access_token"]
         self._refresh_token = login_result["refresh_token"]
@@ -282,6 +296,8 @@ class AylaApi:
         """
         try:
             if force_auth0_sdk or self.europe:
+                from auth0.authentication import GetToken
+                from auth0.asyncify import asyncify
                 AsyncGetToken = asyncify(GetToken)
                 get_token = AsyncGetToken(EU_AUTH0_HOST if self.europe else AUTH0_HOST, EU_AUTH0_CLIENT_ID if self.europe else AUTH0_CLIENT_ID)
                 auth_result = await get_token.login_async(
@@ -305,20 +321,116 @@ class AylaApi:
                 return await self._legacy_cookie_sign_in(ayla_client, force_auth0_sdk=True)
             raise err
 
+    @property
+    def auth0_refresh_token(self) -> Optional[str]:
+        """
+        The Auth0 refresh token from a browser sign-in, to be saved for next time.
+
+        Returns:
+            The refresh token, or None if no browser sign-in has happened.
+        """
+        return self._auth0_refresh_token
+
+    @property
+    def auth0_id_token(self) -> Optional[str]:
+        """
+        The current Auth0 id_token, which also authenticates to Shark's newer device service.
+        """
+        return self._auth0_id_token
+
+    @property
+    def auth0_token_expiring_soon(self) -> bool:
+        """
+        Return true if there is no Auth0 id_token or it expires within five minutes.
+
+        ``async_sign_in()`` gets a new one.
+        """
+        if not self._auth0_id_token:
+            return True
+        expires = Auth0Client.decode_id_token_claims(self._auth0_id_token).get("exp")
+        if not isinstance(expires, (int, float)):
+            return False  # no expiry to go by; a refused request will tell
+        return datetime.now().timestamp() > expires - 300
+
+    @property
+    def email(self) -> Optional[str]:
+        """
+        The account's email address, as given or as reported by Auth0 after sign-in.
+        """
+        return self._email
+
+    def _store_auth0_tokens(self, token_data: Dict):
+        """
+        Keep the tokens from an Auth0 token response.
+
+        Args:
+            token_data: The response of a code exchange or token refresh.
+        """
+        self._auth0_id_token = token_data["id_token"]
+        if not self._email:
+            self._email = Auth0Client.decode_id_token_claims(self._auth0_id_token).get("email")
+        new_refresh_token = token_data.get("refresh_token")
+        if new_refresh_token and new_refresh_token != self._auth0_refresh_token:
+            self._auth0_refresh_token = new_refresh_token
+            if self._on_auth0_token_update is not None:
+                self._on_auth0_token_update(new_refresh_token)
+
+    async def async_sign_in_with_code(self, code: str, code_verifier: str):
+        """
+        Finish a browser sign-in and authenticate to the Ayla API.
+
+        Args:
+            code: The authorization code, from ``Auth0Client.parse_callback``.
+            code_verifier: The verifier half of the PKCE pair used for the login URL.
+
+        Returns:
+            The Ayla access token.  ``auth0_refresh_token`` is set afterwards.
+        """
+        ayla_client = await self.ensure_session()
+        token_data = await Auth0Client.exchange_code(
+            ayla_client, self.europe, code, code_verifier, verify_ssl=self.verify_ssl
+        )
+        if not token_data.get("refresh_token"):
+            raise SharkIqAuthError("Auth0 did not return a refresh token")
+        self._store_auth0_tokens(token_data)
+        return await self._ayla_token_sign_in(ayla_client)
+
     async def async_sign_in(self):
         """
         Authenticate to Ayla API asynchronously.
 
-        Uses the cross-origin Auth0 flow (do_auth0_login) which bypasses
-        Auth0's bot detection.  The direct password grant is no longer used
-        because Auth0 rejects it with "requires_verification" (CAPTCHA),
-        which locks the account after a few attempts.
+        With an Auth0 refresh token (from a browser sign-in) this only refreshes
+        tokens: no password is sent and Auth0's bot detection is not involved.
+
+        Without one it falls back to the legacy scripted password login, which
+        Auth0 may reject with "requires_verification" and which can lock the
+        account after a few attempts.
+
+        Raises:
+            SharkIqReauthRequiredError: A new browser sign-in is needed.
+            SharkIqAuthError: Any other authentication failure.
         """
         ayla_client = await self.ensure_session()
 
-        await self._legacy_cookie_sign_in(ayla_client)
+        if self._auth0_refresh_token:
+            token_data = await Auth0Client.refresh_tokens(
+                ayla_client, self.europe, self._auth0_refresh_token, verify_ssl=self.verify_ssl
+            )
+            self._store_auth0_tokens(token_data)
+        elif self._password:
+            await self._legacy_cookie_sign_in(ayla_client)
+        else:
+            raise SharkIqReauthRequiredError("No Auth0 refresh token or password.  Sign in with a browser first.")
 
-        # Step 2: Ayla token_sign_in exchange
+        return await self._ayla_token_sign_in(ayla_client)
+
+    async def _ayla_token_sign_in(self, ayla_client: aiohttp.ClientSession):
+        """
+        Exchange the Auth0 id_token for Ayla credentials.
+
+        Returns:
+            The Ayla access token.
+        """
         login_data = self._login_data
         login_url = f"{EU_LOGIN_URL if self.europe else LOGIN_URL}/api/v1/token_sign_in"
         async with ayla_client.post(

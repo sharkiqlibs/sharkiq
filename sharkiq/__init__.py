@@ -6,9 +6,12 @@ from .exc import (
     SharkIqAuthExpiringError,
     SharkIqNotAuthedError,
     SharkIqAuthError,
+    SharkIqReauthRequiredError,
     SharkIqReadOnlyPropertyError,
+    SkegoxApiError,
 )
 from .sharkiq import OperatingModes, PowerModes,  Properties, SharkIqVacuum
+from .skegox import SkegoxApi, SkegoxVacuum, VacuumState, async_get_all_devices
 
 try:
     from importlib.metadata import version, PackageNotFoundError
